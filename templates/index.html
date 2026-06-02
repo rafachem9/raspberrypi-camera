@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Raspberry Pi Camera</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #111; color: #eee; min-height: 100vh; }
+    header { background: #1a1a2e; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.4rem; color: #e94560; }
+    .badge { background: #e94560; color: white; padding: 2px 8px; border-radius: 99px; font-size: 0.75rem; display: none; }
+    .badge.visible { display: inline; }
+    main { padding: 1.5rem; max-width: 960px; margin: 0 auto; }
+    .stream-box { position: relative; background: #000; border-radius: 10px; overflow: hidden; aspect-ratio: 16/9; }
+    .stream-box img { width: 100%; height: 100%; object-fit: cover; }
+    .rec-indicator { position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,.5);
+      border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; display: none; gap: 6px; align-items: center; }
+    .rec-indicator.on { display: flex; }
+    .rec-dot { width: 10px; height: 10px; background: red; border-radius: 50%; animation: blink 1s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+    .controls { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.2rem; }
+    button { padding: 0.6rem 1.4rem; border: none; border-radius: 8px; cursor: pointer;
+      font-size: 0.95rem; font-weight: 600; transition: opacity .2s; }
+    button:disabled { opacity: .4; cursor: default; }
+    #btnRecord { background: #e94560; color: white; }
+    #btnStop   { background: #555; color: white; }
+    #btnPhoto  { background: #0f3460; color: white; }
+    #btnRefresh { background: #16213e; color: #aaa; }
+    .files { margin-top: 2rem; }
+    .files h2 { margin-bottom: 0.8rem; font-size: 1rem; color: #aaa; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #222; }
+    th { color: #888; }
+    a { color: #e94560; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    #msg { margin-top: 0.8rem; font-size: 0.85rem; color: #aaa; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>&#128247; Raspberry Pi Camera</h1>
+  <span class="badge" id="recBadge">REC</span>
+</header>
+<main>
+  <div class="stream-box">
+    <img src="/stream" alt="Live stream" />
+    <div class="rec-indicator" id="recIndicator">
+      <div class="rec-dot"></div> Grabando
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btnRecord" onclick="startRec()">&#9679; Grabar</button>
+    <button id="btnStop" onclick="stopRec()" disabled>&#9632; Detener</button>
+    <button id="btnPhoto" onclick="takePhoto()">&#128247; Foto</button>
+    <button id="btnRefresh" onclick="loadFiles()">&#8635; Actualizar lista</button>
+  </div>
+  <div id="msg"></div>
+
+  <div class="files">
+    <h2>Grabaciones y fotos</h2>
+    <table>
+      <thead><tr><th>Archivo</th><th>Tamaño</th><th>Fecha</th><th>Descargar</th></tr></thead>
+      <tbody id="fileList"><tr><td colspan="4" style="color:#555">Cargando...</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  function msg(text) { document.getElementById('msg').textContent = text; }
+
+  async function startRec() {
+    const r = await fetch('/record/start', { method: 'POST' });
+    const d = await r.json();
+    if (r.ok) {
+      document.getElementById('recIndicator').classList.add('on');
+      document.getElementById('recBadge').classList.add('visible');
+      document.getElementById('btnRecord').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+      msg('Grabando: ' + d.file);
+    } else {
+      msg('Ya hay una grabación en curso.');
+    }
+  }
+
+  async function stopRec() {
+    const r = await fetch('/record/stop', { method: 'POST' });
+    const d = await r.json();
+    document.getElementById('recIndicator').classList.remove('on');
+    document.getElementById('recBadge').classList.remove('visible');
+    document.getElementById('btnRecord').disabled = false;
+    document.getElementById('btnStop').disabled = true;
+    if (r.ok) {
+      msg('Guardado: ' + d.file);
+      loadFiles();
+    } else {
+      msg('No había grabación activa.');
+    }
+  }
+
+  async function takePhoto() {
+    const r = await fetch('/photo', { method: 'POST' });
+    const d = await r.json();
+    msg('Foto guardada: ' + d.file);
+    loadFiles();
+  }
+
+  async function loadFiles() {
+    const r = await fetch('/recordings');
+    const files = await r.json();
+    const tbody = document.getElementById('fileList');
+    if (!files.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#555">Sin archivos aún</td></tr>';
+      return;
+    }
+    tbody.innerHTML = files.map(f => `
+      <tr>
+        <td>${f.name}</td>
+        <td>${f.size} MB</td>
+        <td>${f.date}</td>
+        <td><a href="/recordings/${f.name}">Descargar</a></td>
+      </tr>`).join('');
+  }
+
+  // Sincronizar estado al cargar
+  fetch('/status').then(r => r.json()).then(d => {
+    if (d.recording) {
+      document.getElementById('recIndicator').classList.add('on');
+      document.getElementById('recBadge').classList.add('visible');
+      document.getElementById('btnRecord').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+    }
+  });
+
+  loadFiles();
+</script>
+</body>
+</html>
